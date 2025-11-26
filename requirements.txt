@@ -1,0 +1,8 @@
+openai
+streamlit
+pandas
+yfinance
+matplotlib
+numpy==2.2.6
+pyarrow==18.0.0.dev206
+python-dotenv
