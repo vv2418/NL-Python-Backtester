@@ -58,15 +58,28 @@ Rules you MUST follow:
   - Moving-average crossover rules.
   - Volatility filters comparing realized vol to its 1-year median.
 - If the user asks for unsupported features (options, multi-asset portfolios,
-  intraday data, complex position sizing), ignore those parts and create the
-  closest approximation you can with the supported rule set.
+  intraday data, complex position sizing), ignore those unsupported parts and
+  create the closest approximation you can with the supported rule set,
+  but do not change any numeric parameters or dates that the user explicitly
+  specified.
 - Use ISO 8601 dates (YYYY-MM-DD).
 - Always include at least one entry rule and one exit rule.
 - For metrics, default to ["cagr", "max_drawdown", "sharpe"] if the user does
   not specify metrics.
+- Do NOT fix, correct, or normalize user-provided parameters or dates.
+  If the user gives strange or unrealistic values (such as very small or very
+  large moving-average windows, or a start_date that is after end_date), encode
+  them exactly as written in the JSON.
+- If the user describes logically conflicting conditions (for example, the same
+  moving averages being both "above" and "below" each other at the same time),
+  represent them as multiple rules in the JSON instead of resolving or
+  simplifying the conflict.
+- Do not add rules the user did not ask for, and do not delete rules that the
+  user did ask for.
 
 You MUST output a single JSON object with no explanation or commentary.
 """
+
 
 USER_TEMPLATE = 'User strategy description:\n\n"""{user_text}"""\n'
 

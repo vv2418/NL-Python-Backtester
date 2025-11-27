@@ -10,10 +10,10 @@ from core.data import load_price_data, add_features
 from core.backtester import run_backtest
 from core.metrics import compute_basic_metrics
 from core.plotting import plot_equity_curve
+from core.validator import validate_spec, validate_with_data
 from llm.translator import translate_to_spec
 from llm.explainer import summarize_results
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -57,7 +57,6 @@ def main():
     if not run_button:
         return
 
-    # 1. Translate NL -> StrategySpec
     with st.spinner("Translating strategy with LLM..."):
         try:
             spec: StrategySpec = translate_to_spec(user_text)
@@ -67,16 +66,41 @@ def main():
             st.error(f"Failed to translate strategy: {e}")
             return
 
+    validation = validate_spec(spec)
+    if validation.errors or validation.warnings:
+        st.subheader("Strategy Check")
+        for msg in validation.errors:
+            st.error(msg)
+        for msg in validation.warnings:
+            st.warning(msg)
+    if validation.errors:
+        return
+
     st.subheader("Parsed Strategy Spec")
     st.json(spec.to_dict())
 
-    # 2. Load data, add features, run backtest
     with st.spinner("Loading data and running backtest..."):
         try:
             df = load_price_data(spec)
             logger.info("Data fetching completed successfully")
             df = add_features(df, spec)
             logger.info("Feature addition completed successfully")
+        except Exception as e:
+            logger.error(f"Data preparation failed: {e}")
+            st.error(f"Data preparation failed: {e}")
+            return
+
+        data_validation = validate_with_data(spec, df)
+        if data_validation.errors or data_validation.warnings:
+            st.subheader("Pre-backtest QA")
+            for msg in data_validation.errors:
+                st.error(msg)
+            for msg in data_validation.warnings:
+                st.warning(msg)
+        if data_validation.errors:
+            return
+
+        try:
             results_df = run_backtest(df, spec)
             logger.info("Backtesting completed successfully")
         except Exception as e:

@@ -3,6 +3,6 @@ streamlit
 pandas
 yfinance
 matplotlib
-numpy==2.2.6
-pyarrow==18.0.0.dev206
+numpy
+pyarrow
 python-dotenv
