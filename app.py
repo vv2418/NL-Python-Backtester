@@ -8,7 +8,7 @@ import streamlit as st
 
 from core.strategy_spec import StrategySpec, CrossoverRule, VolFilterRule
 from core.data import load_price_data, add_features
-from core.backtester import run_backtest
+from core.backtester import run_backtest, extract_trades, trades_to_dataframe
 from core.metrics import compute_basic_metrics
 from core.plotting import plot_equity_curve
 from core.validator import validate_spec, validate_with_data
@@ -269,6 +269,73 @@ def main():
 
         st.subheader("LLM Explanation")
         st.write(explanation)
+
+    # Trade-by-Trade Debugger Section
+    st.markdown("---")
+    st.subheader("🔍 Trade-by-Trade Debugger")
+
+    with st.spinner("Extracting trade details..."):
+        try:
+            trades = extract_trades(df, spec)
+            trades_df = trades_to_dataframe(trades)
+            logger.info(f"Extracted {len(trades)} trades")
+        except Exception as e:
+            logger.error(f"Trade extraction failed: {e}")
+            st.error(f"Failed to extract trades: {e}")
+            trades = []
+            trades_df = None
+
+    if trades_df is not None and len(trades) > 0:
+        # Summary stats
+        winning_trades = sum(1 for t in trades if t.pnl_pct and t.pnl_pct > 0)
+        losing_trades = sum(1 for t in trades if t.pnl_pct and t.pnl_pct < 0)
+        avg_pnl = sum(t.pnl_pct for t in trades if t.pnl_pct) / len(trades) if trades else 0
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Trades", len(trades))
+        col2.metric("Winning", winning_trades)
+        col3.metric("Losing", losing_trades)
+        col4.metric("Avg P&L", f"{avg_pnl:+.2f}%")
+
+        # Trade table with expandable details
+        with st.expander("View all trades", expanded=True):
+            st.dataframe(
+                trades_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        # Individual trade explorer
+        st.markdown("#### Explore Individual Trade")
+        trade_num = st.selectbox(
+            "Select trade to inspect",
+            options=range(1, len(trades) + 1),
+            format_func=lambda x: f"Trade {x}: {trades[x-1].entry_date} → {trades[x-1].exit_date or 'Open'}",
+        )
+
+        if trade_num:
+            t = trades[trade_num - 1]
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Entry Details**")
+                st.write(f"Date: {t.entry_date}")
+                st.write(f"Price: ${t.entry_price:.2f}")
+                st.info(t.entry_reason)
+
+            with col2:
+                st.markdown("**Exit Details**")
+                st.write(f"Date: {t.exit_date or 'N/A'}")
+                st.write(f"Price: ${t.exit_price:.2f}" if t.exit_price else "N/A")
+                if t.exit_reason:
+                    st.info(t.exit_reason)
+                if t.pnl_pct is not None:
+                    if t.pnl_pct >= 0:
+                        st.success(f"P&L: {t.pnl_pct:+.2f}%")
+                    else:
+                        st.error(f"P&L: {t.pnl_pct:+.2f}%")
+    else:
+        st.info("No trades were executed during this backtest period.")
 
 
 if __name__ == "__main__":
