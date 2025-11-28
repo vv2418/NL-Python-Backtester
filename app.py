@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Dict
 
 import streamlit as st
 
-from core.strategy_spec import StrategySpec
+from core.strategy_spec import StrategySpec, CrossoverRule, VolFilterRule
 from core.data import load_price_data, add_features
 from core.backtester import run_backtest
 from core.metrics import compute_basic_metrics
@@ -13,6 +14,7 @@ from core.plotting import plot_equity_curve
 from core.validator import validate_spec, validate_with_data
 from llm.translator import translate_to_spec
 from llm.explainer import summarize_results
+from llm.interpreter import explain_interpretation
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +29,50 @@ Go long when the 10-day moving average crosses above the 50-day moving average.
 Exit when the 10-day moving average crosses back below the 50-day.
 Only enter new positions when 20-day realized volatility is below its 1-year median.
 Show CAGR, max drawdown, and Sharpe ratio."""
+
+
+def get_default_assumptions(spec: StrategySpec) -> Dict[str, str]:
+    """Extract and format default assumptions from the strategy spec."""
+    assumptions = {}
+    
+    # Moving average assumptions
+    ma_windows = set()
+    for rule in spec.entry_rules + spec.exit_rules:
+        if isinstance(rule, CrossoverRule):
+            ma_windows.add(rule.fast_ma)
+            ma_windows.add(rule.slow_ma)
+    
+    if ma_windows:
+        ma_list = ", ".join([f"{w}-day" for w in sorted(ma_windows)])
+        assumptions["Moving Average Type"] = "Simple Moving Average (SMA)"
+        assumptions["MA Windows"] = ma_list
+    
+    # Volatility assumptions
+    vol_windows = set()
+    for rule in spec.entry_rules + spec.exit_rules:
+        if isinstance(rule, VolFilterRule):
+            vol_windows.add(rule.window)
+    
+    if vol_windows:
+        vol_list = ", ".join([f"{w}-day" for w in sorted(vol_windows)])
+        assumptions["Realized Volatility Calculation"] = (
+            f"Daily returns, {vol_list} rolling window, annualized (√252 scaling)"
+        )
+        assumptions["1-Year Median Calculation"] = (
+            "Rolling 252 trading-day median (trailing window, not calendar year)"
+        )
+    
+    # Execution assumptions
+    assumptions["Order Execution"] = "Close-to-close (position changes at market close)"
+    assumptions["Position Sizing"] = "Long-only, full position (1.0 when in market, 0.0 when out)"
+    assumptions["Entry Logic"] = "All entry rules must be satisfied (AND logic)"
+    assumptions["Exit Logic"] = "Any exit rule triggers exit (OR logic)"
+    
+    # Data assumptions
+    assumptions["Price Data"] = "Adjusted close prices from Yahoo Finance"
+    assumptions["Return Calculation"] = "Close-to-close percentage returns"
+    
+    return assumptions
 
 
 def main():
@@ -52,32 +98,122 @@ def main():
         height=220,
     )
 
+    # Initialize session state
+    if "confirmed" not in st.session_state:
+        st.session_state.confirmed = False
+    if "spec" not in st.session_state:
+        st.session_state.spec = None
+    if "interpretation" not in st.session_state:
+        st.session_state.interpretation = None
+    if "user_text_hash" not in st.session_state:
+        st.session_state.user_text_hash = None
+
+    # Hash user text to detect changes
+    import hashlib
+    current_text_hash = hashlib.md5(user_text.encode()).hexdigest()
+    
+    # Reset confirmation if user text changed
+    if st.session_state.user_text_hash != current_text_hash:
+        st.session_state.confirmed = False
+        st.session_state.spec = None
+        st.session_state.interpretation = None
+        st.session_state.user_text_hash = current_text_hash
+
     run_button = st.button("Run backtest")
 
-    if not run_button:
-        return
+    # Safety: if confirmed but no spec, reset confirmation
+    if st.session_state.confirmed and st.session_state.spec is None:
+        st.session_state.confirmed = False
+    
+    # If user hasn't confirmed yet, show interpretation and wait for confirmation
+    if not st.session_state.confirmed:
+        if run_button:
+            # Translate strategy
+            with st.spinner("Translating strategy with LLM..."):
+                try:
+                    st.session_state.spec = translate_to_spec(user_text)
+                    logger.info("Translation completed successfully")
+                except Exception as e:
+                    logger.error(f"Translation failed: {e}")
+                    st.error(f"Failed to translate strategy: {e}")
+                    return
 
-    with st.spinner("Translating strategy with LLM..."):
-        try:
-            spec: StrategySpec = translate_to_spec(user_text)
-            logger.info("Translation completed successfully")
-        except Exception as e:
-            logger.error(f"Translation failed: {e}")
-            st.error(f"Failed to translate strategy: {e}")
-            return
+            # Generate interpretation explanation
+            with st.spinner("Generating interpretation explanation..."):
+                try:
+                    st.session_state.interpretation = explain_interpretation(
+                        user_text, st.session_state.spec
+                    )
+                    logger.info("Interpretation explanation generated successfully")
+                except Exception as e:
+                    logger.error(f"Interpretation explanation failed: {e}")
+                    st.warning(f"Could not generate interpretation explanation: {e}")
+                    st.session_state.interpretation = None
 
+        # Show interpretation if available
+        if st.session_state.spec is not None:
+            # Get default assumptions
+            default_assumptions = get_default_assumptions(st.session_state.spec)
+            
+            # Display interpretation and assumptions side-by-side
+            if st.session_state.interpretation:
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    st.subheader("📋 How I Interpreted Your Strategy")
+                    with st.expander("View interpretation details", expanded=True):
+                        st.markdown(st.session_state.interpretation)
+                
+                with col2:
+                    st.subheader("⚙️ Default Assumptions & Values")
+                    with st.expander("View technical defaults", expanded=True):
+                        for key, value in default_assumptions.items():
+                            st.markdown(f"**{key}:**")
+                            st.caption(value)
+                            st.markdown("")  # Add spacing
+
+            # Show parsed spec
+            st.subheader("📊 Parsed Strategy Specification")
+            with st.expander("View technical specification (JSON)", expanded=False):
+                st.json(st.session_state.spec.to_dict())
+
+            # Human-in-the-loop: Require confirmation before proceeding
+            st.markdown("---")
+            st.info("👆 Please review the interpretation and specification above. If everything looks correct, confirm below to proceed with the backtest.")
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                confirm_button = st.button("✅ Confirm & Proceed", type="primary", use_container_width=True)
+            with col2:
+                st.caption("Click to proceed with backtesting, or edit your strategy description above and run again.")
+            
+            if confirm_button:
+                st.session_state.confirmed = True
+                st.rerun()  # Rerun to proceed with backtest
+            
+            st.stop()  # Stop execution until user confirms
+    
+    # User has confirmed, proceed with backtest
+    spec = st.session_state.spec
+    
+    # Safety check: ensure spec exists
+    if spec is None:
+        st.error("❌ No strategy specification found. Please click 'Run backtest' first.")
+        st.stop()
+    
+    logger.info("User confirmed interpretation, proceeding with backtest")
+
+    # Run validation after confirmation
     validation = validate_spec(spec)
     if validation.errors or validation.warnings:
-        st.subheader("Strategy Check")
+        st.subheader("⚠️ Strategy Check")
         for msg in validation.errors:
             st.error(msg)
         for msg in validation.warnings:
             st.warning(msg)
     if validation.errors:
-        return
-
-    st.subheader("Parsed Strategy Spec")
-    st.json(spec.to_dict())
+        st.error("❌ Please fix the errors above before proceeding.")
+        st.stop()
 
     with st.spinner("Loading data and running backtest..."):
         try:
