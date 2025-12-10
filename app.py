@@ -92,6 +92,25 @@ def main():
         "and summarize the performance."
     )
 
+    # Model selection dropdown
+    available_models = [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4-turbo",
+        "gpt-3.5-turbo",
+    ]
+    
+    if "selected_model" not in st.session_state:
+        st.session_state.selected_model = "gpt-4o-mini"
+    
+    selected_model = st.selectbox(
+        "🤖 LLM Model",
+        available_models,
+        index=available_models.index(st.session_state.selected_model),
+        help="Select the OpenAI model to use for translation, interpretation, and explanation. gpt-4o-mini is fastest and cheapest, gpt-4o offers better quality.",
+    )
+    st.session_state.selected_model = selected_model
+
     user_text = st.text_area(
         "Strategy description",
         value=EXAMPLE_STRATEGY,
@@ -107,17 +126,21 @@ def main():
         st.session_state.interpretation = None
     if "user_text_hash" not in st.session_state:
         st.session_state.user_text_hash = None
+    if "model_used" not in st.session_state:
+        st.session_state.model_used = None
 
     # Hash user text to detect changes
     import hashlib
     current_text_hash = hashlib.md5(user_text.encode()).hexdigest()
     
-    # Reset confirmation if user text changed
-    if st.session_state.user_text_hash != current_text_hash:
+    # Reset confirmation if user text or model changed
+    model_changed = st.session_state.model_used != selected_model
+    if st.session_state.user_text_hash != current_text_hash or model_changed:
         st.session_state.confirmed = False
         st.session_state.spec = None
         st.session_state.interpretation = None
         st.session_state.user_text_hash = current_text_hash
+        st.session_state.model_used = selected_model
 
     run_button = st.button("Run backtest")
 
@@ -129,20 +152,21 @@ def main():
     if not st.session_state.confirmed:
         if run_button:
             # Translate strategy
-            with st.spinner("Translating strategy with LLM..."):
+            with st.spinner(f"Translating strategy with {selected_model}..."):
                 try:
-                    st.session_state.spec = translate_to_spec(user_text)
-                    logger.info("Translation completed successfully")
+                    st.session_state.spec = translate_to_spec(user_text, model=selected_model)
+                    st.session_state.model_used = selected_model
+                    logger.info(f"Translation completed successfully with {selected_model}")
                 except Exception as e:
                     logger.error(f"Translation failed: {e}")
                     st.error(f"Failed to translate strategy: {e}")
                     return
 
             # Generate interpretation explanation
-            with st.spinner("Generating interpretation explanation..."):
+            with st.spinner(f"Generating interpretation explanation with {selected_model}..."):
                 try:
                     st.session_state.interpretation = explain_interpretation(
-                        user_text, st.session_state.spec
+                        user_text, st.session_state.spec, model=selected_model
                     )
                     logger.info("Interpretation explanation generated successfully")
                 except Exception as e:
@@ -259,9 +283,10 @@ def main():
         st.subheader("Performance Metrics")
         st.json(metrics)
 
-        with st.spinner("Generating explanation..."):
+        with st.spinner(f"Generating explanation with {st.session_state.model_used}..."):
             try:
-                explanation = summarize_results(spec, metrics)
+                model = st.session_state.model_used or st.session_state.selected_model
+                explanation = summarize_results(spec, metrics, model=model)
                 logger.info("Explanation generation completed successfully")
             except Exception as e:
                 logger.error(f"Explanation generation failed: {e}")
@@ -301,7 +326,7 @@ def main():
         with st.expander("View all trades", expanded=True):
             st.dataframe(
                 trades_df,
-                use_container_width=True,
+                width=True,
                 hide_index=True,
             )
 

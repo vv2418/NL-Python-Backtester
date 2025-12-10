@@ -1,0 +1,16 @@
+Summary Statistics:
+================================================================================
+     task_type       model  count  success_rate  avg_input_tokens  avg_output_tokens  avg_total_tokens  total_cost_usd  avg_cost_usd  avg_latency_seconds  total_latency_seconds
+   explanation      gpt-4o     12    100.000000        361.416667         228.416667        589.833333        0.038254      0.003188             4.433500                 53.202
+   explanation gpt-4o-mini     11    100.000000        362.909091         218.818182        581.727273        0.002044      0.000186             5.363545                 58.999
+interpretation      gpt-4o     11    100.000000        664.818182         162.727273        827.545455        0.036183      0.003289             3.203273                 35.236
+interpretation gpt-4o-mini     14    100.000000        651.285714         172.000000        823.285714        0.002813      0.000201             4.535500                 63.497
+   translation      gpt-4o     11    100.000000        646.909091         159.909091        806.818182        0.035379      0.003216             1.575818                 17.334
+   translation gpt-4o-mini     15     93.333333        598.466667         150.000000        748.466667        0.002695      0.000180             4.042133                 60.632
+
+================================================================================
+Overall Totals:
+Total runs: 74
+Total cost: $0.1174
+Total tokens: 54,208
+Overall success rate: 98.6%

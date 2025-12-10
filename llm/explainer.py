@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Dict
 
@@ -7,6 +8,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from core.strategy_spec import StrategySpec
+from utils.metrics_tracker import log_metrics
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent / ".env"
@@ -48,11 +50,37 @@ def summarize_results(
         f"{payload}"
     )
 
-    response = _client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-            {"role": "user", "content": input_text},
-        ],
-    )
-    return response.choices[0].message.content
+    start_time = time.time()
+    success = False
+    error_msg = None
+    
+    try:
+        response = _client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                {"role": "user", "content": input_text},
+            ],
+        )
+
+        input_tokens = response.usage.prompt_tokens
+        output_tokens = response.usage.completion_tokens
+        result = response.choices[0].message.content
+        success = True
+        return result
+    except Exception as e:
+        error_msg = str(e)
+        input_tokens = 0
+        output_tokens = 0
+        raise
+    finally:
+        latency = time.time() - start_time
+        log_metrics(
+            task_type="explanation",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_seconds=latency,
+            success=success,
+            error_message=error_msg,
+        )

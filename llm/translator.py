@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from core.strategy_spec import parse_strategy_spec, StrategySpec
+from utils.metrics_tracker import log_metrics
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent / ".env"
@@ -86,16 +88,44 @@ USER_TEMPLATE = 'User strategy description:\n\n"""{user_text}"""\n'
 
 def translate_to_spec(user_text: str, model: str = "gpt-4o-mini") -> StrategySpec:
     prompt = USER_TEMPLATE.format(user_text=user_text)
+    
+    start_time = time.time()
+    success = False
+    error_msg = None
+    
+    try:
+        response = _client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+        )
 
-    response = _client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
-
-    json_str = response.choices[0].message.content
-    data: Dict[str, Any] = json.loads(json_str)
-    return parse_strategy_spec(data)
+        # Extract token usage
+        input_tokens = response.usage.prompt_tokens
+        output_tokens = response.usage.completion_tokens
+        
+        json_str = response.choices[0].message.content
+        data: Dict[str, Any] = json.loads(json_str)
+        spec = parse_strategy_spec(data)
+        success = True
+        
+        return spec
+    except Exception as e:
+        error_msg = str(e)
+        input_tokens = 0
+        output_tokens = 0
+        raise
+    finally:
+        latency = time.time() - start_time
+        log_metrics(
+            task_type="translation",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_seconds=latency,
+            success=success,
+            error_message=error_msg,
+        )
