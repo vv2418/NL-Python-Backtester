@@ -6,7 +6,7 @@ from typing import List
 import pandas as pd
 
 from .strategy_spec import StrategySpec, CrossoverRule, VolFilterRule, Rule
-from .backtester import _evaluate_crossover, _evaluate_vol_filter
+from .backtester import _evaluate_crossover, _evaluate_vol_filter, _evaluate_sequential_entry
 
 
 @dataclass
@@ -77,6 +77,8 @@ def validate_spec(spec: StrategySpec) -> ValidationResult:
 
 
 def _evaluate_entry_rules(spec: StrategySpec, row_idx: int, df: pd.DataFrame) -> bool:
+    if spec.entry_sequential:
+        return _evaluate_sequential_entry(spec.entry_rules, row_idx, df)
     result = True
     for rule in spec.entry_rules:
         if isinstance(rule, CrossoverRule):
@@ -113,18 +115,28 @@ def validate_with_data(spec: StrategySpec, df: pd.DataFrame) -> ValidationResult
     n = len(df)
     max_ma = 0
     max_vol = 0
+    max_lookahead = 0
+    max_duration = 0
 
     for rule in spec.entry_rules + spec.exit_rules:
         if isinstance(rule, CrossoverRule):
             max_ma = max(max_ma, rule.fast_ma, rule.slow_ma)
         elif isinstance(rule, VolFilterRule):
             max_vol = max(max_vol, rule.window)
+        if rule.lookahead_days is not None:
+            max_lookahead = max(max_lookahead, rule.lookahead_days)
+        if rule.duration_days is not None:
+            max_duration = max(max_duration, rule.duration_days)
 
     required_len = 0
     if max_ma > 0:
         required_len = max(required_len, max_ma + 10)
     if max_vol > 0:
         required_len = max(required_len, max_vol + 252)
+    if max_lookahead > 0:
+        required_len = max(required_len, max_lookahead + 10)
+    if max_duration > 0:
+        required_len = max(required_len, max_duration + 10)
 
     if required_len > 0 and n < required_len:
         warnings.append(

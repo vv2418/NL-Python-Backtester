@@ -1,0 +1,47 @@
+=== TEMPORAL CONSTRAINT TEST PROMPTS ===
+(Ordered from easiest to hardest)
+
+1. EASY - Simple Lookahead
+---
+Backtest AAPL from 2020-01-01 to 2024-01-01.
+Enter long when the 10-day moving average crosses above the 50-day moving average and within the next 5 trading days the 20-day realized volatility drops below its 1-year median.
+Exit when the 10-day moving average crosses below the 50-day moving average.
+
+2. EASY - Simple Duration
+---
+Backtest TSLA from 2019-01-01 to 2023-01-01.
+Enter long when the 5-day moving average crosses above the 20-day moving average.
+Exit when the 5-day moving average has been below the 20-day moving average for 3 consecutive days.
+
+3. MEDIUM - Sequential Entry
+---
+Backtest GOOGL from 2020-01-01 to 2024-01-01.
+Enter long if first the 10-day moving average crosses above the 50-day moving average, and then within the next 3 trading days the 20-day realized volatility drops below its 1-year median.
+If the volatility condition doesn't happen within 3 days, do not enter.
+Exit when the 10-day moving average crosses below the 50-day moving average.
+
+4. MEDIUM - Entry Duration + Exit Lookahead
+---
+Backtest MSFT from 2021-01-01 to 2024-01-01.
+Enter long when the 10-day moving average has been above the 50-day moving average for 2 straight days.
+Exit when the 10-day moving average crosses below the 50-day moving average within the next 2 trading days.
+
+5. HARD - Multiple Sequential Rules
+---
+Backtest NVDA from 2020-01-01 to 2024-01-01.
+Enter long if first the 10-day moving average crosses above the 50-day moving average, then within the next 5 trading days the 20-day realized volatility drops below its 1-year median, and then within the next 2 trading days after that the 5-day moving average crosses above the 10-day moving average.
+Exit when the 10-day moving average crosses below the 50-day moving average.
+
+6. HARD - Sequential Entry + Duration Exit
+---
+Backtest AMZN from 2019-01-01 to 2023-01-01.
+Enter long if first the 20-day moving average crosses above the 50-day moving average, and then within the next 4 trading days the 30-day realized volatility drops below its 1-year median.
+Exit when the 20-day moving average has been below the 50-day moving average for 2 consecutive days.
+
+7. VERY HARD - Complex Sequential with Multiple Constraints
+---
+Backtest SPY from 2020-01-01 to 2024-01-01.
+Enter long if first the 10-day moving average crosses above the 50-day moving average, then within the next 3 trading days the 20-day realized volatility must drop below its 1-year median, and then within the next 2 trading days after that the 5-day moving average must cross above the 10-day moving average.
+If any of these conditions don't happen within their time windows, do not enter.
+Exit when the 10-day moving average has been below the 50-day moving average for 2 straight days.
+

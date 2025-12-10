@@ -79,15 +79,62 @@ def _get_triggered_rules(
 
 
 def _evaluate_crossover(rule: CrossoverRule, row_idx: int, df: pd.DataFrame) -> bool:
+    """Evaluate crossover rule, supporting lookahead and duration constraints."""
     fast_col = f"ma_{rule.fast_ma}"
     slow_col = f"ma_{rule.slow_ma}"
     if fast_col not in df.columns or slow_col not in df.columns:
         return False
-    # Use .iloc for integer position-based access, ensure scalar values
+    
+    n = len(df)
+    
+    # Handle duration requirement: condition must be true for N consecutive days
+    if rule.duration_days is not None:
+        duration = rule.duration_days
+        if row_idx < duration - 1:
+            return False
+        for offset in range(duration):
+            check_idx = row_idx - offset
+            if check_idx < 0:
+                return False
+            row = df.iloc[check_idx]
+            fast = row[fast_col]
+            slow = row[slow_col]
+            if isinstance(fast, pd.Series):
+                fast = fast.item() if len(fast) == 1 else fast.iloc[0]
+            if isinstance(slow, pd.Series):
+                slow = slow.item() if len(slow) == 1 else slow.iloc[0]
+            if pd.isna(fast) or pd.isna(slow):
+                return False
+            condition_met = (fast > slow) if rule.direction == "above" else (fast < slow)
+            if not condition_met:
+                return False
+        return True
+    
+    # Handle lookahead: check if condition is true within next N days
+    if rule.lookahead_days is not None:
+        lookahead = rule.lookahead_days
+        for offset in range(lookahead + 1):
+            check_idx = row_idx + offset
+            if check_idx >= n:
+                continue
+            row = df.iloc[check_idx]
+            fast = row[fast_col]
+            slow = row[slow_col]
+            if isinstance(fast, pd.Series):
+                fast = fast.item() if len(fast) == 1 else fast.iloc[0]
+            if isinstance(slow, pd.Series):
+                slow = slow.item() if len(slow) == 1 else slow.iloc[0]
+            if pd.isna(fast) or pd.isna(slow):
+                continue
+            condition_met = (fast > slow) if rule.direction == "above" else (fast < slow)
+            if condition_met:
+                return True
+        return False
+    
+    # Standard evaluation: check current row only
     row = df.iloc[row_idx]
     fast = row[fast_col]
     slow = row[slow_col]
-    # Convert to Python scalar if needed
     if isinstance(fast, pd.Series):
         fast = fast.item() if len(fast) == 1 else fast.iloc[0]
     if isinstance(slow, pd.Series):
@@ -101,15 +148,62 @@ def _evaluate_crossover(rule: CrossoverRule, row_idx: int, df: pd.DataFrame) -> 
 
 
 def _evaluate_vol_filter(rule: VolFilterRule, row_idx: int, df: pd.DataFrame) -> bool:
+    """Evaluate volatility filter rule, supporting lookahead and duration constraints."""
     rv_col = f"rv_{rule.window}"
     med_col = f"rv_{rule.window}_med_252"
     if rv_col not in df.columns or med_col not in df.columns:
         return False
-    # Use .iloc for integer position-based access, ensure scalar values
+    
+    n = len(df)
+    
+    # Handle duration requirement: condition must be true for N consecutive days
+    if rule.duration_days is not None:
+        duration = rule.duration_days
+        if row_idx < duration - 1:
+            return False
+        for offset in range(duration):
+            check_idx = row_idx - offset
+            if check_idx < 0:
+                return False
+            row = df.iloc[check_idx]
+            rv = row[rv_col]
+            med = row[med_col]
+            if isinstance(rv, pd.Series):
+                rv = rv.item() if len(rv) == 1 else rv.iloc[0]
+            if isinstance(med, pd.Series):
+                med = med.item() if len(med) == 1 else med.iloc[0]
+            if pd.isna(rv) or pd.isna(med):
+                return False
+            condition_met = (rv < med) if rule.relation == "below" else (rv > med)
+            if not condition_met:
+                return False
+        return True
+    
+    # Handle lookahead: check if condition is true within next N days
+    if rule.lookahead_days is not None:
+        lookahead = rule.lookahead_days
+        for offset in range(lookahead + 1):
+            check_idx = row_idx + offset
+            if check_idx >= n:
+                continue
+            row = df.iloc[check_idx]
+            rv = row[rv_col]
+            med = row[med_col]
+            if isinstance(rv, pd.Series):
+                rv = rv.item() if len(rv) == 1 else rv.iloc[0]
+            if isinstance(med, pd.Series):
+                med = med.item() if len(med) == 1 else med.iloc[0]
+            if pd.isna(rv) or pd.isna(med):
+                continue
+            condition_met = (rv < med) if rule.relation == "below" else (rv > med)
+            if condition_met:
+                return True
+        return False
+    
+    # Standard evaluation: check current row only
     row = df.iloc[row_idx]
     rv = row[rv_col]
     med = row[med_col]
-    # Convert to Python scalar if needed
     if isinstance(rv, pd.Series):
         rv = rv.item() if len(rv) == 1 else rv.iloc[0]
     if isinstance(med, pd.Series):
@@ -138,6 +232,71 @@ def _evaluate_rules(rules: List[Rule], row_idx: int, df: pd.DataFrame) -> bool:
     return result
 
 
+def _evaluate_rule_at_index(rule: Rule, row_idx: int, df: pd.DataFrame) -> bool:
+    """Evaluate a rule at a specific index, ignoring lookahead/duration constraints."""
+    if isinstance(rule, CrossoverRule):
+        # Temporarily disable lookahead and duration to check specific day
+        original_lookahead = rule.lookahead_days
+        original_duration = rule.duration_days
+        rule.lookahead_days = None
+        rule.duration_days = None
+        result = _evaluate_crossover(rule, row_idx, df)
+        rule.lookahead_days = original_lookahead
+        rule.duration_days = original_duration
+        return result
+    elif isinstance(rule, VolFilterRule):
+        original_lookahead = rule.lookahead_days
+        original_duration = rule.duration_days
+        rule.lookahead_days = None
+        rule.duration_days = None
+        result = _evaluate_vol_filter(rule, row_idx, df)
+        rule.lookahead_days = original_lookahead
+        rule.duration_days = original_duration
+        return result
+    return False
+
+
+def _evaluate_sequential_entry(rules: List[Rule], row_idx: int, df: pd.DataFrame) -> bool:
+    """Evaluate sequential entry rules: first rule must trigger, then subsequent rules within their lookahead windows.
+    
+    Returns True if:
+    - First rule triggers at row_idx (ignoring its lookahead if present)
+    - Each subsequent rule triggers within its lookahead_days window (starting from row_idx)
+    - If a rule has no lookahead_days, it must trigger at the same time as the first rule
+    """
+    if not rules:
+        return False
+    
+    n = len(df)
+    
+    # First rule must trigger at current row (check without lookahead)
+    first_rule = rules[0]
+    if not _evaluate_rule_at_index(first_rule, row_idx, df):
+        return False
+    
+    # For subsequent rules, check if they trigger within their lookahead windows
+    for rule in rules[1:]:
+        if rule.lookahead_days is None:
+            # No lookahead: must trigger at same time as first rule
+            if not _evaluate_rule_at_index(rule, row_idx, df):
+                return False
+        else:
+            # Has lookahead: check if it triggers within the window (including same day)
+            lookahead = rule.lookahead_days
+            rule_triggered = False
+            for offset in range(lookahead + 1):  # Include same day (offset 0)
+                check_idx = row_idx + offset
+                if check_idx >= n:
+                    break
+                if _evaluate_rule_at_index(rule, check_idx, df):
+                    rule_triggered = True
+                    break
+            if not rule_triggered:
+                return False
+    
+    return True
+
+
 def run_backtest(df: pd.DataFrame, spec: StrategySpec) -> pd.DataFrame:
     """Simple long-only backtest.
 
@@ -153,8 +312,11 @@ def run_backtest(df: pd.DataFrame, spec: StrategySpec) -> pd.DataFrame:
     position = 0.0
 
     for i in range(n):
-        # Entry: all entry rules must be true
-        entry_ok = _evaluate_rules(spec.entry_rules, i, df)
+        # Entry: use sequential evaluation if enabled, otherwise standard evaluation
+        if spec.entry_sequential:
+            entry_ok = _evaluate_sequential_entry(spec.entry_rules, i, df)
+        else:
+            entry_ok = _evaluate_rules(spec.entry_rules, i, df)
 
         # Exit: any exit rule true -> exit
         exit_ok = False
@@ -210,7 +372,40 @@ def extract_trades(df: pd.DataFrame, spec: StrategySpec) -> List[Trade]:
         close_price = float(df["close"].iloc[i])
 
         # Check entry conditions
-        entry_ok, entry_reasons = _get_triggered_rules(spec.entry_rules, i, df, is_entry=True)
+        if spec.entry_sequential:
+            entry_ok = _evaluate_sequential_entry(spec.entry_rules, i, df)
+            # For sequential, collect reasons - first rule at current day, subsequent rules within their windows
+            entry_reasons = []
+            if entry_ok:
+                # First rule triggered at current day
+                first_rule = spec.entry_rules[0]
+                if isinstance(first_rule, CrossoverRule):
+                    entry_reasons.append(_format_crossover_reason(first_rule, row, is_entry=True))
+                elif isinstance(first_rule, VolFilterRule):
+                    entry_reasons.append(_format_vol_filter_reason(first_rule, row, is_entry=True))
+                
+                # Find when subsequent rules triggered within their lookahead windows
+                for rule in spec.entry_rules[1:]:
+                    found = False
+                    lookahead = rule.lookahead_days if rule.lookahead_days is not None else 0
+                    for offset in range(lookahead + 1):
+                        check_idx = i + offset
+                        if check_idx < len(df) and _evaluate_rule_at_index(rule, check_idx, df):
+                            check_row = df.iloc[check_idx]
+                            if isinstance(rule, CrossoverRule):
+                                entry_reasons.append(_format_crossover_reason(rule, check_row, is_entry=True))
+                            elif isinstance(rule, VolFilterRule):
+                                entry_reasons.append(_format_vol_filter_reason(rule, check_row, is_entry=True))
+                            found = True
+                            break
+                    if not found and rule.lookahead_days is None:
+                        # No lookahead, should have triggered at same time
+                        if isinstance(rule, CrossoverRule):
+                            entry_reasons.append(_format_crossover_reason(rule, row, is_entry=True))
+                        elif isinstance(rule, VolFilterRule):
+                            entry_reasons.append(_format_vol_filter_reason(rule, row, is_entry=True))
+        else:
+            entry_ok, entry_reasons = _get_triggered_rules(spec.entry_rules, i, df, is_entry=True)
 
         # Check exit conditions (any exit rule)
         exit_reasons = []
